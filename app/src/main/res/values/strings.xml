@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">KotlinProject6</string>
+    <string name="change_Time">시간 재설정</string>
+</resources>
