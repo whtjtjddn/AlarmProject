@@ -1,10 +1,14 @@
 package com.example.kotlinproject6
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.app.TimePickerDialog
 import android.content.Context
+import android.content.Intent
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.widget.Button
+import android.widget.TextView
 import java.util.*
 
 class MainActivity : AppCompatActivity() {
@@ -13,6 +17,12 @@ class MainActivity : AppCompatActivity() {
     }
     private val setTimeButton: Button by lazy {
         findViewById<Button>(R.id.setTimeButton)
+    }
+    private val timeTextView : TextView by lazy{
+        findViewById<TextView>(R.id.timeTextView)
+    }
+    private val ampmTextView : TextView by lazy{
+        findViewById<TextView>(R.id.ampmTextView)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -26,6 +36,11 @@ class MainActivity : AppCompatActivity() {
 
         initSetAlarmButton()
         initSetTimeButton()
+
+        //데이터 가져오기
+        val model = fetchDataFromSharedPreferences()
+
+        renderView(model)
     }
 
     private fun initSetAlarmButton() {
@@ -34,7 +49,42 @@ class MainActivity : AppCompatActivity() {
             // 온오프에 따라 작업 처리
             // 오프 -> 알람 제거 온 -> 알람 켜기
             // 데이터 저장
+            val model = it.tag as? AlarmDisplayModel ?: return@setOnClickListener
+
+            val newModel = saveAlarmModel(model.hour, model.minute, model.onOff)
+            renderView(newModel)
+
+            if(newModel.onOff){
+                val calendar = Calendar.getInstance().apply{
+                    set(Calendar.HOUR_OF_DAY, newModel.hour)
+                    set(Calendar.MINUTE, newModel.minute)
+
+                    if(before(Calendar.getInstance())){
+                        add(Calendar.DATE,1)
+                    }
+                }
+                val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+                val intent = Intent(this, AlarmReceiver::class.java)
+                val pendingIntent = PendingIntent.getBroadcast(this, ALARM_REQUEST_CODE, intent ,PendingIntent.FLAG_UPDATE_CURRENT)
+
+                alarmManager.setInexactRepeating(
+                    AlarmManager.RTC_WAKEUP,
+                    calendar.timeInMillis,
+                    AlarmManager.INTERVAL_DAY,
+                    pendingIntent
+                )
+            }
+            else {
+                cancelAlarm()
+            }
         }
+
+    }
+
+    private fun cancelAlarm(){
+        val pendingIntent = PendingIntent.getBroadcast(this, ALARM_REQUEST_CODE, Intent(this,AlarmReceiver::class.java),PendingIntent.FLAG_NO_CREATE)
+        pendingIntent?.cancel()
     }
 
     private fun initSetTimeButton() {
@@ -42,13 +92,15 @@ class MainActivity : AppCompatActivity() {
             val calendar = Calendar.getInstance()
 
             TimePickerDialog(this, { picker, hour, minute ->
-                saveAlarmModel(hour, minute, false)
+                //데이터 저장(SaveAlarmModel) 및 데이터에 따른 뷰 업데이트(RenderView)
+                val model = saveAlarmModel(hour, minute, false)
+                renderView(model)
+
+                //기존 알람 삭제
+                cancelAlarm()
 
             }, calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE), false)
                 .show()
-            //현재시간 가져오기
-            //timePickDialog에서 가져온 시간 데이터 저장 -> View 업데이트
-            //기존에 있던 알람 삭제
         }
     }
 
@@ -56,17 +108,64 @@ class MainActivity : AppCompatActivity() {
         val model = AlarmDisplayModel(
             hour = hour,
             minute = minute,
-            onOff = false
+            onOff = onOff
         )
-        val sharedPreferences = getSharedPreferences("time", Context.MODE_PRIVATE)
+        val sharedPreferences = getSharedPreferences(SHARED_PREFERENCES_NAME, Context.MODE_PRIVATE)
 
         with(sharedPreferences.edit()){
-            putString("alarm", model.makeDataForDB())
-            putBoolean("onOff",model.onOff)
+            putString(ALARM_KEY, model.makeDataForDB())
+            putBoolean(ONOFF_KEY,model.onOff)
             commit()
         }
         return model
 
+    }
+
+    private fun fetchDataFromSharedPreferences() : AlarmDisplayModel{
+        val sharedPreferences = getSharedPreferences(SHARED_PREFERENCES_NAME, Context.MODE_PRIVATE)
+
+        val timeDBValue = sharedPreferences.getString(ALARM_KEY, "00:00") ?: "00:00"
+        val onOFFDBValue = sharedPreferences.getBoolean(ONOFF_KEY,false)
+        val alarmData = timeDBValue.split(":")
+
+        val alarmModel = AlarmDisplayModel(
+            hour = alarmData[0].toInt(),
+            minute = alarmData[1].toInt(),
+            onOff = onOFFDBValue
+        )
+
+        val pendingIntent = PendingIntent.getBroadcast(this, ALARM_REQUEST_CODE, Intent(this,AlarmReceiver::class.java),PendingIntent.FLAG_NO_CREATE)
+
+        if((pendingIntent == null) and alarmModel.onOff){
+            //알람은 꺼져잇는데, 데이터는 켜져있는 경우
+            alarmModel.onOff = false
+        }
+        else if((pendingIntent != null) and alarmModel.onOff.not()){
+            //알람은 켜져있는데, 데이터는 꺼져있는 경우
+            cancelAlarm()
+        }
+
+        return alarmModel
+    }
+
+    private fun renderView(model : AlarmDisplayModel){
+        ampmTextView.apply{
+            text = model.ampmText
+        }
+        timeTextView.apply{
+            text = model.timeText
+        }
+        setTimeButton.apply{
+            text = model.onOffText
+            tag = model
+        }
+    }
+
+    companion object{
+        private const val ALARM_REQUEST_CODE = 1000
+        private const val SHARED_PREFERENCES_NAME = "time"
+        private const val ALARM_KEY = "alarm"
+        private const val ONOFF_KEY = "onOff"
     }
 
 }
